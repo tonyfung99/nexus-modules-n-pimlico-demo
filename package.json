@@ -1,0 +1,20 @@
+{
+  "name": "biconomy-smart-session",
+  "module": "index.ts",
+  "type": "module",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@biconomy/sdk": "^0.0.21",
+    "@rhinestone/module-sdk": "^0.2.0",
+    "permissionless": "^0.2.24",
+    "viem": "^2.22.1"
+  },
+  "scripts": {
+    "start": "bun index.ts"
+  }
+}
