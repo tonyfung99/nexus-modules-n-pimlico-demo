@@ -85,6 +85,7 @@ export const createAccountAndSendTransaction = async () => {
     signer: userAccount,
     transport: http(),
     bundlerTransport: http(bundlerUrl),
+    paymaster,
   });
 
   console.log("smart account address", nexusClient.account.address);
