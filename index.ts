@@ -12,9 +12,9 @@ import {
   type PimlicoClient,
   createPimlicoClient,
 } from "permissionless/clients/pimlico";
-import { type Account, type Hex, encodeFunctionData, http } from "viem";
+import { type Hex, encodeFunctionData, http, stringify } from "viem";
 import { entryPoint07Address } from "viem/account-abstraction";
-import { privateKeyToAccount } from "viem/accounts";
+import { type Account, privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 
 const CounterAbi = [
@@ -35,6 +35,7 @@ const bundlerUrl =
 const sessionOwnerPrivateKey =
   "b3e825c37425a8b8b8122c64e46c19f3475debbce6747698ca3d11a0cb097811";
 
+// utility to get address of pimlico smart account
 const getAccountAddress = async ({
   userAccount,
   bundlerUrl,
@@ -77,15 +78,21 @@ export const createAccountAndSendTransaction = async () => {
   // 2. Set up Nexus client
   const nexusClient = await createNexusClient({
     chain: baseSepolia,
+    signer: userAccount,
+    transport: http(),
+    bundlerTransport: http(bundlerUrl),
+    paymaster,
+    userOperation: {
+      estimateFeesPerGas: async () =>
+        (
+          await paymaster.getUserOperationGasPrice()
+        ).fast,
+    },
     accountAddress: await getAccountAddress({
       userAccount,
       bundlerUrl,
       paymaster,
     }),
-    signer: userAccount,
-    transport: http(),
-    bundlerTransport: http(bundlerUrl),
-    paymaster,
   });
 
   console.log("smart account address", nexusClient.account.address);
@@ -135,12 +142,18 @@ export const createAccountAndSendTransaction = async () => {
   const sessionData: SessionData = {
     granter: nexusClient.account.address,
     sessionPublicKey,
+    description: `Permission to increment number at ${"0xabc"} on behalf of ${nexusClient.account.address.slice(
+      0,
+      6
+    )} `, // Optional
     moduleData: {
-      permissionIds: createSessionsResponse.permissionIds,
+      ...createSessionsResponse,
       mode: SmartSessionMode.USE,
-      // TODO: Fix this later
-    } as any,
+    },
   };
+
+  const compressedSessionData = stringify(sessionData);
+  console.log("compressedSessionData", compressedSessionData);
 
   // 2. Create a Nexus Client for Using the Session
   const smartSessionNexusClient = await createNexusClient({
@@ -149,6 +162,7 @@ export const createAccountAndSendTransaction = async () => {
     signer: sessionOwner,
     transport: http(),
     bundlerTransport: http(bundlerUrl),
+    paymaster,
   });
 
   // 3. Create a Smart Sessions Module for the Session Key
@@ -174,6 +188,8 @@ export const createAccountAndSendTransaction = async () => {
       },
     ],
   });
+
+  console.log("userOpHash", userOpHash);
 };
 
 createAccountAndSendTransaction();
