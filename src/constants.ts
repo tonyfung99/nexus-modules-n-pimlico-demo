@@ -15,11 +15,10 @@ export const privateKey =
 
 export const pimlicoApiKey = "pim_7v4gDjrni9vE38P9GDNC1W";
 
-export const bundlerUrl =
-  "https://api.pimlico.io/v2/84532/rpc?apikey=pim_7v4gDjrni9vE38P9GDNC1W";
+export const bundlerUrl = `https://api.pimlico.io/v2/84532/rpc?apikey=${pimlicoApiKey}`;
 
 export const sessionOwnerPrivateKey =
-  "b3e825c37425a8b8b8122c64e46c19f3475debbce6747698ca3d11a0cb097811";
+  "b3e825c37425a8b8b8122c64e46c19f3475debbce6747698ca3d11a0cb097812";
 
 export const chain = baseSepolia;
 

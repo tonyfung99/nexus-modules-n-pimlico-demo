@@ -1,26 +1,78 @@
 import {
+  erc7579Actions,
   MAINNET_ADDRESS_K1_VALIDATOR_ADDRESS,
   MAINNET_ADDRESS_K1_VALIDATOR_FACTORY_ADDRESS,
-  erc7579Actions,
-  safeMultiplier,
+  smartSessionCreateActions,
   toNexusAccount,
   toSmartSessionsValidator,
+  type CreateSessionDataParams,
+  type ModuleMeta,
+  type NexusClient,
 } from "@biconomy/sdk";
+import { ethers } from "ethers";
+import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { http } from "viem";
-import { createBundlerClient } from "viem/account-abstraction";
-import { privateKeyToAccount } from "viem/accounts";
 import {
-  bundlerUrl,
-  chain,
-  privateKey,
-  publicClient,
-  sessionOwnerPrivateKey,
-} from "./src/constants";
+  createBundlerClient,
+  entryPoint07Address,
+  UserOperationExecutionError,
+} from "viem/account-abstraction";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { bundlerUrl, chain, CounterAbi, privateKey } from "./src/constants";
+
+const COUNTER_CONTRACT_ADDRESS = "0x9CB7345d91e2120B5080ca7b786d9F40436D7895";
+
+// Return hash if successful, null if already installed
+const installSessionModuleOrThrow = async ({
+  nexusClient,
+  moduleInitData,
+}: {
+  nexusClient: NexusClient;
+  moduleInitData: ModuleMeta;
+}) => {
+  try {
+    const hash = await nexusClient.installModule({
+      module: moduleInitData,
+    });
+
+    const { success } = await nexusClient.waitForUserOperationReceipt({
+      hash,
+    });
+
+    if (!success) {
+      throw new Error("Failed to install module");
+    }
+
+    return hash;
+  } catch (error) {
+    const ALREADY_INSTALLED_ERROR =
+      "0x40d3d1a400000000000000000000000000000000002b0ecfbd0496ee71e01257da0e37de";
+    if (
+      error instanceof UserOperationExecutionError &&
+      error.shortMessage.includes(ALREADY_INSTALLED_ERROR)
+    ) {
+      console.log("Module already installed");
+      // Do nothing
+
+      return null;
+    } else {
+      throw error;
+    }
+  }
+};
 
 export const createAccountAndSendTransaction = async () => {
   const userAccount = privateKeyToAccount(`0x${privateKey}`);
-  const sessionOwner = privateKeyToAccount(`0x${sessionOwnerPrivateKey}`);
+  const sessionOwner = privateKeyToAccount(generatePrivateKey());
   const sessionPublicKey = sessionOwner.address;
+
+  const paymaster = createPimlicoClient({
+    transport: http(bundlerUrl),
+    entryPoint: {
+      address: entryPoint07Address,
+      version: "0.7",
+    },
+  });
 
   const nexusAccount = await toNexusAccount({
     signer: userAccount,
@@ -36,18 +88,13 @@ export const createAccountAndSendTransaction = async () => {
     chain: chain,
     transport: http(bundlerUrl),
     account: nexusAccount,
-    // paymaster,
+    paymaster,
+    paymasterContext: {
+      sponsorshipPolicyId: "sp_high_lyja",
+    },
     userOperation: {
-      estimateFeesPerGas: async (_) => {
-        const feeData = await publicClient.estimateFeesPerGas();
-        return {
-          maxFeePerGas: safeMultiplier(feeData.maxFeePerGas, 1.4),
-          maxPriorityFeePerGas: safeMultiplier(
-            feeData.maxPriorityFeePerGas,
-            1.4
-          ),
-        };
-      },
+      estimateFeesPerGas: async () =>
+        (await paymaster.getUserOperationGasPrice()).fast,
     },
   }).extend(erc7579Actions());
 
@@ -62,43 +109,46 @@ export const createAccountAndSendTransaction = async () => {
     await nexusAccount.getCounterFactualAddress()
   );
 
-  // 4. Install the smart session module
-  const hash = await nexusClient.installModule({
-    module: sessionsModule.moduleInitData,
+  const hash = await installSessionModuleOrThrow({
+    nexusClient: nexusClient as unknown as NexusClient,
+    moduleInitData: sessionsModule.moduleInitData,
   });
-  const { success: installSuccess } =
-    await nexusClient.waitForUserOperationReceipt({ hash });
 
-  console.log(`installSuccess: ${installSuccess}, hash: ${hash}`);
+  console.log("----- hash", hash);
 
-  // const nexusSessionClient = nexusClient.extend(
-  //   smartSessionCreateActions(sessionsModule)
-  // );
+  const nexusSessionClient = nexusClient.extend(
+    smartSessionCreateActions(sessionsModule)
+  );
 
-  // const sessionRequestedInfo: CreateSessionDataParams[] = [
-  //   {
-  //     sessionPublicKey, // Public key of the session
-  //     actionPoliciesInfo: [
-  //       {
-  //         contractAddress: "0x9CB7345d91e2120B5080ca7b786d9F40436D7895",
-  //         rules: [],
-  //         functionSelector: "0x273ea3e3" as Hex, // Selector for 'incrementNumber'
-  //       },
-  //     ],
-  //   },
-  // ];
+  const sessionRequestedInfo: CreateSessionDataParams[] = [
+    {
+      sessionPublicKey, // Public key of the session
+      actionPoliciesInfo: [
+        {
+          contractAddress: COUNTER_CONTRACT_ADDRESS,
+          rules: [],
+          functionSelector:
+            new ethers.Interface(CounterAbi as any).getFunction(
+              "incrementNumber"
+            )?.selector || "",
 
-  // // 5. Create the smart session
-  // const createSessionsResponse = await nexusSessionClient.grantPermission({
-  //   sessionRequestedInfo,
-  // });
+          sudo: true,
+        },
+      ],
+    },
+  ];
 
-  // const { success } = await nexusClient.waitForUserOperationReceipt({
-  //   hash: createSessionsResponse.userOpHash,
-  // });
+  // 5. Create the smart session
+  const createSessionsResponse = await nexusSessionClient.grantPermission({
+    sessionRequestedInfo,
+  });
+
+  const { success } = await nexusClient.waitForUserOperationReceipt({
+    hash: createSessionsResponse.userOpHash,
+  });
 
   // console.log(
-  //   `success: ${success}, hash: ${createSessionsResponse.userOpHash}`
+  //   `createSessionsResponse: ${createSessionsResponse}, success: ${success}, hash: ${createSessionsResponse.userOpHash}`
   // );
 
   // // Use the Smart Session
@@ -107,10 +157,10 @@ export const createAccountAndSendTransaction = async () => {
   // const sessionData: SessionData = {
   //   granter: nexusClient.account.address,
   //   sessionPublicKey,
-  //   description: `Permission to increment number at ${"0xabc"} on behalf of ${nexusClient.account.address.slice(
-  //     0,
-  //     6
-  //   )} `, // Optional
+  //   // description: `Permission to increment number at ${COUNTER_CONTRACT_ADDRESS} on behalf of ${nexusClient.account.address.slice(
+  //   //   0,
+  //   //   6
+  //   // )} `, // Optional
   //   moduleData: {
   //     ...createSessionsResponse,
   //     mode: SmartSessionMode.USE,
@@ -127,7 +177,7 @@ export const createAccountAndSendTransaction = async () => {
   //   signer: sessionOwner,
   //   transport: http(),
   //   bundlerTransport: http(bundlerUrl),
-  //   // paymaster,
+  //   paymaster,
   // });
 
   // // 3. Create a Smart Sessions Module for the Session Key
@@ -145,7 +195,7 @@ export const createAccountAndSendTransaction = async () => {
   // const userOpHash = await useSmartSessionNexusClient.usePermission({
   //   calls: [
   //     {
-  //       to: "0x9CB7345d91e2120B5080ca7b786d9F40436D7895",
+  //       to: COUNTER_CONTRACT_ADDRESS,
   //       data: encodeFunctionData({
   //         abi: CounterAbi,
   //         functionName: "incrementNumber",
