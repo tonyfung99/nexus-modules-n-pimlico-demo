@@ -13,7 +13,7 @@
     "@rhinestone/module-sdk": "^0.2.0",
     "ethers": "^6.13.4",
     "permissionless": "^0.2.24",
-    "viem": "^2.22.1"
+    "viem": "^2.22.2"
   },
   "scripts": {
     "start": "bun index.ts"

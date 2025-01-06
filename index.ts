@@ -9,16 +9,14 @@ import {
   type ModuleMeta,
   type NexusClient,
 } from "@biconomy/sdk";
-import { ethers } from "ethers";
 import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { http } from "viem";
 import {
   createBundlerClient,
   entryPoint07Address,
-  UserOperationExecutionError,
 } from "viem/account-abstraction";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { bundlerUrl, chain, CounterAbi, privateKey } from "./src/constants";
+import { bundlerUrl, chain, privateKey, publicClient } from "./src/constants";
 
 const COUNTER_CONTRACT_ADDRESS = "0x9CB7345d91e2120B5080ca7b786d9F40436D7895";
 
@@ -30,35 +28,27 @@ const installSessionModuleOrThrow = async ({
   nexusClient: NexusClient;
   moduleInitData: ModuleMeta;
 }) => {
-  try {
-    const hash = await nexusClient.installModule({
-      module: moduleInitData,
-    });
+  const isInstalled = await nexusClient.isModuleInstalled({
+    module: moduleInitData,
+  });
 
-    const { success } = await nexusClient.waitForUserOperationReceipt({
-      hash,
-    });
-
-    if (!success) {
-      throw new Error("Failed to install module");
-    }
-
-    return hash;
-  } catch (error) {
-    const ALREADY_INSTALLED_ERROR =
-      "0x40d3d1a400000000000000000000000000000000002b0ecfbd0496ee71e01257da0e37de";
-    if (
-      error instanceof UserOperationExecutionError &&
-      error.shortMessage.includes(ALREADY_INSTALLED_ERROR)
-    ) {
-      console.log("Module already installed");
-      // Do nothing
-
-      return null;
-    } else {
-      throw error;
-    }
+  if (isInstalled) {
+    return null;
   }
+
+  const hash = await nexusClient.installModule({
+    module: moduleInitData,
+  });
+
+  const { success } = await nexusClient.waitForUserOperationReceipt({
+    hash,
+  });
+
+  if (!success) {
+    throw new Error("Failed to install module");
+  }
+
+  return hash;
 };
 
 export const createAccountAndSendTransaction = async () => {
@@ -96,6 +86,7 @@ export const createAccountAndSendTransaction = async () => {
       estimateFeesPerGas: async () =>
         (await paymaster.getUserOperationGasPrice()).fast,
     },
+    client: publicClient,
   }).extend(erc7579Actions());
 
   // 3. Create a smart sessions module for the user's account
@@ -126,13 +117,7 @@ export const createAccountAndSendTransaction = async () => {
       actionPoliciesInfo: [
         {
           contractAddress: COUNTER_CONTRACT_ADDRESS,
-          rules: [],
-          functionSelector:
-            new ethers.Interface(CounterAbi as any).getFunction(
-              "incrementNumber"
-            )?.selector || "",
-
-          sudo: true,
+          functionSelector: `0x273ea3e3`,
         },
       ],
     },
@@ -141,15 +126,12 @@ export const createAccountAndSendTransaction = async () => {
   // 5. Create the smart session
   const createSessionsResponse = await nexusSessionClient.grantPermission({
     sessionRequestedInfo,
+    account: nexusClient.account,
   });
 
   const { success } = await nexusClient.waitForUserOperationReceipt({
     hash: createSessionsResponse.userOpHash,
   });
-
-  // console.log(
-  //   `createSessionsResponse: ${createSessionsResponse}, success: ${success}, hash: ${createSessionsResponse.userOpHash}`
-  // );
 
   // // Use the Smart Session
 
