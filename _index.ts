@@ -1,7 +1,7 @@
 import {
-  createBicoPaymasterClient,
-  createSmartAccountClient,
   erc7579Actions,
+  MAINNET_ADDRESS_K1_VALIDATOR_ADDRESS,
+  MAINNET_ADDRESS_K1_VALIDATOR_FACTORY_ADDRESS,
   smartSessionCreateActions,
   toNexusAccount,
   toSmartSessionsValidator,
@@ -9,9 +9,14 @@ import {
   type ModuleMeta,
   type NexusClient,
 } from "@biconomy/sdk";
+import { createPimlicoClient } from "permissionless/clients/pimlico";
 import { http } from "viem";
+import {
+  createBundlerClient,
+  entryPoint07Address,
+} from "viem/account-abstraction";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { bundlerUrl, chain, privateKey } from "./src/constants";
+import { bundlerUrl, chain, privateKey, publicClient } from "./src/constants";
 
 const COUNTER_CONTRACT_ADDRESS = "0x9CB7345d91e2120B5080ca7b786d9F40436D7895";
 
@@ -51,29 +56,38 @@ export const createAccountAndSendTransaction = async () => {
   const sessionOwner = privateKeyToAccount(generatePrivateKey());
   const sessionPublicKey = sessionOwner.address;
 
-  const paymaster = createBicoPaymasterClient({
-    paymasterUrl:
-      "https://paymaster.biconomy.io/api/v2/84532/dGSXkf5Xb.aa9555c3-fbfa-4fae-8a8a-e7e40e57aa0f",
+  const paymaster = createPimlicoClient({
+    transport: http(bundlerUrl),
+    entryPoint: {
+      address: entryPoint07Address,
+      version: "0.7",
+    },
   });
 
   const nexusAccount = await toNexusAccount({
     signer: userAccount,
     chain,
     transport: http(),
+    // You can omit this outside of a testing context
+    k1ValidatorAddress: MAINNET_ADDRESS_K1_VALIDATOR_ADDRESS,
+    factoryAddress: MAINNET_ADDRESS_K1_VALIDATOR_FACTORY_ADDRESS,
   });
 
   // 2. Set up Nexus client
-  const nexusClient = (
-    await createSmartAccountClient({
-      signer: userAccount,
-      chain,
-      transport: http(),
-      paymaster,
-      bundlerTransport: http(bundlerUrl),
-    })
-  ).extend(erc7579Actions());
-
-  if (!nexusClient.account) throw new Error("Nexus client not found");
+  const nexusClient = createBundlerClient({
+    chain: chain,
+    transport: http(bundlerUrl),
+    account: nexusAccount,
+    paymaster,
+    paymasterContext: {
+      sponsorshipPolicyId: "sp_high_lyja",
+    },
+    userOperation: {
+      estimateFeesPerGas: async () =>
+        (await paymaster.getUserOperationGasPrice()).fast,
+    },
+    client: publicClient,
+  }).extend(erc7579Actions());
 
   // 3. Create a smart sessions module for the user's account
   const sessionsModule = toSmartSessionsValidator({
