@@ -32,7 +32,7 @@ export const CounterAbi = [
 ] as const satisfies Abi;
 
 export const privateKey =
-  "67ab66f3df8b39445f8b34ed86c4ca68f8f48861b359582b8c9c0d84611db5a2";
+  "67ab66f3df8b39445f8b34ed85c4ca68f8f48861b359582b8c9c0d84611db5ca";
 
 export const sessionOwnerPrivateKey =
   "b3e825c37425a8b8b8122c64e46c19f3475debbce6747698ca3d11a0cb097812";

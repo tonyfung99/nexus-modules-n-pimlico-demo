@@ -1,7 +1,6 @@
 import {
   createBicoPaymasterClient,
   createSmartAccountClient,
-  erc7579Actions,
   smartSessionCreateActions,
   toNexusAccount,
   toSmartSessionsValidator,
@@ -13,7 +12,7 @@ import { http } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { bundlerUrl, chain, privateKey } from "./src/constants";
 
-const COUNTER_CONTRACT_ADDRESS = "0x9CB7345d91e2120B5080ca7b786d9F40436D7895";
+const COUNTER_CONTRACT_ADDRESS = "0x14e4829E655F0b3a1793838dDd47273D5341d416";
 
 // Return hash if successful, null if already installed
 const installSessionModuleOrThrow = async ({
@@ -39,7 +38,11 @@ const installSessionModuleOrThrow = async ({
     hash,
   });
 
-  if (!success) {
+  const isInstalledAfter = await nexusClient.isModuleInstalled({
+    module: moduleInitData,
+  });
+
+  if (!success || !isInstalledAfter) {
     throw new Error("Failed to install module");
   }
 
@@ -63,15 +66,13 @@ export const createAccountAndSendTransaction = async () => {
   });
 
   // 2. Set up Nexus client
-  const nexusClient = (
-    await createSmartAccountClient({
-      signer: userAccount,
-      chain,
-      transport: http(),
-      paymaster,
-      bundlerTransport: http(bundlerUrl),
-    })
-  ).extend(erc7579Actions());
+  const nexusClient = await createSmartAccountClient({
+    signer: userAccount,
+    chain,
+    transport: http(),
+    paymaster,
+    bundlerTransport: http(bundlerUrl),
+  });
 
   if (!nexusClient.account) throw new Error("Nexus client not found");
 
@@ -112,7 +113,6 @@ export const createAccountAndSendTransaction = async () => {
   // 5. Create the smart session
   const createSessionsResponse = await nexusSessionClient.grantPermission({
     sessionRequestedInfo,
-    account: nexusClient.account,
   });
 
   const { success } = await nexusClient.waitForUserOperationReceipt({

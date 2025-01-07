@@ -9,11 +9,11 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@biconomy/sdk": "^0.0.22",
-    "@rhinestone/module-sdk": "^0.2.0",
+    "@biconomy/sdk": "^0.0.24",
+    "@rhinestone/module-sdk": "^0.2.1",
     "ethers": "^6.13.4",
     "permissionless": "^0.2.24",
-    "viem": "^2.22.2"
+    "viem": "^2.22.3"
   },
   "scripts": {
     "start": "bun index.ts"
