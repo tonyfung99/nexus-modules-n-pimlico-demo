@@ -10,12 +10,18 @@ import {
 } from "@biconomy/sdk";
 import { encodeFunctionData, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { bundlerUrl, chain, CounterAbi, privateKey } from "./src/constants.js";
+import {
+  bundlerUrl,
+  chain,
+  CounterAbi,
+  privateKey,
+  sessionOwnerPrivateKey,
+} from "./src/constants.js";
 import { testAddresses } from "./utils.js";
 
 const init = async () => {
   const eoaAccount = privateKeyToAccount(`0x${privateKey}`);
-  // const sessionOwner = privateKeyToAccount(`0x${sessionOwnerPrivateKey}`);
+  const sessionOwner = privateKeyToAccount(`0x${sessionOwnerPrivateKey}`);
 
   const nexusClient = await createSmartAccountClient({
     signer: eoaAccount,
@@ -61,11 +67,11 @@ const init = async () => {
 
   const sessionRequestedInfo: CreateSessionDataParams[] = [
     {
-      sessionPublicKey: eoaAccount.address, // session key signer
+      sessionPublicKey: sessionOwner.address,
       actionPoliciesInfo: [
         {
-          contractAddress: testAddresses.Counter, // counter address
-          functionSelector: "0x273ea3e3" as Hex, // function selector for increment count
+          contractAddress: testAddresses.Counter,
+          functionSelector: "0x273ea3e3" as Hex,
         },
       ],
     },
@@ -98,7 +104,7 @@ const init = async () => {
 
   const sessionData: SessionData = {
     granter: nexusClient.account.address,
-    sessionPublicKey: eoaAccount.address,
+    sessionPublicKey: sessionOwner.address,
     moduleData: {
       permissionIds: createSessionsResponse.permissionIds,
       action: createSessionsResponse.action,
@@ -109,15 +115,15 @@ const init = async () => {
 
   const smartSessionNexusClient = await createSmartAccountClient({
     chain,
-    accountAddress: nexusClient.account.address,
-    signer: eoaAccount,
+    accountAddress: sessionData.granter,
+    signer: sessionOwner,
     transport: http(),
     bundlerTransport: http(bundlerUrl),
   });
 
   const usePermissionsModule = toSmartSessionsValidator({
     account: smartSessionNexusClient.account,
-    signer: eoaAccount,
+    signer: sessionOwner,
     moduleData: sessionData.moduleData,
   });
 
