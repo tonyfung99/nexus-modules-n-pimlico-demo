@@ -1,63 +1,100 @@
 import {
   createBicoPaymasterClient,
   createSmartAccountClient,
+  Erc7579Actions,
+  erc7579Actions,
+  NexusAccount,
+  SmartAccountActions,
+  smartAccountActions,
   smartSessionCreateActions,
   SmartSessionMode,
+  SmartSessionUseActions,
   smartSessionUseActions,
+  toNexusAccount,
   toSmartSessionsValidator,
   type CreateSessionDataParams,
   type SessionData,
 } from "@biconomy/sdk";
-import { encodeFunctionData, http, type Hex } from "viem";
+import { Chain, Client, createWalletClient, encodeFunctionData, http, HttpTransport, WalletClient, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import {
-  bundlerUrl,
-  chain,
-  CounterAbi,
-  privateKey,
-  sessionOwnerPrivateKey,
-} from "./src/constants.js";
+import { bundlerUrl, chain, CounterAbi, privateKey, sessionOwnerPrivateKey } from "./src/constants.js";
 import { testAddresses } from "./utils.js";
+import { BundlerActions, BundlerClient, createBundlerClient, entryPoint07Address, SmartAccount } from "viem/account-abstraction";
+import { baseSepolia } from "viem/chains";
+import { createPimlicoClient } from "permissionless/clients/pimlico";
 
 const init = async () => {
   const eoaAccount = privateKeyToAccount(`0x${privateKey}`);
   const sessionOwner = privateKeyToAccount(`0x${sessionOwnerPrivateKey}`);
+  const currentChain = baseSepolia;
 
-  const nexusClient = await createSmartAccountClient({
-    signer: eoaAccount,
-    chain,
-    transport: http(),
-    bundlerTransport: http(bundlerUrl),
-    paymaster: createBicoPaymasterClient({
-      transport: http(
-        "https://paymaster.biconomy.io/api/v2/84532/dGSXkf5Xb.aa9555c3-fbfa-4fae-8a8a-e7e40e57aa0f"
-      ),
-    }),
+  const paymaster = createPimlicoClient({
+    transport: http(bundlerUrl),
+    entryPoint: {
+      address: entryPoint07Address,
+      version: "0.7",
+    },
   });
+
+  const eoaWalletClient = createWalletClient({
+    account: eoaAccount,
+    chain: currentChain,
+    transport: http(),
+  });
+
+  console.log(`>> eoaWalletClient: ${eoaWalletClient.account.address}`);
+
+  const nexusAccount = await toNexusAccount({
+    signer: eoaWalletClient.account,
+    chain: currentChain,
+    transport: http(),
+  });
+
+  const nexusClient = createBundlerClient({
+    transport: http(bundlerUrl),
+    account: nexusAccount,
+    paymaster: paymaster,
+    // paymasterContext: {
+    //   sponsorshipPolicyId,
+    // },
+    userOperation: {
+      estimateFeesPerGas: async () => (await paymaster.getUserOperationGasPrice()).fast,
+    },
+  }) as unknown as BundlerClient<HttpTransport, Chain, SmartAccount>;
+
+  const withErc7579Actions = nexusClient.extend((client) => erc7579Actions()(client as Client<HttpTransport, Chain, SmartAccount>));
+  const withSmartAccountActions = withErc7579Actions.extend((client) => smartAccountActions()(client as Client<HttpTransport, Chain, SmartAccount>));
+
+  const accountClient = withSmartAccountActions as unknown as BundlerClient<HttpTransport, Chain, SmartAccount> &
+    BundlerActions<SmartAccount> &
+    Erc7579Actions<SmartAccount> &
+    SmartAccountActions<Chain, SmartAccount>;
 
   const sessionsModule = toSmartSessionsValidator({
-    account: nexusClient.account,
+    account: nexusAccount,
     signer: eoaAccount,
   });
 
-  const isInstalledBefore = await nexusClient.isModuleInstalled({
+  const isInstalledBefore = await accountClient.isModuleInstalled({
     module: sessionsModule,
+    account: nexusAccount,
   });
 
+  console.log(`>> ${nexusClient.account.address} sessionModule ${sessionsModule.address} isInstalledBefore: ${isInstalledBefore}`);
+
   if (!isInstalledBefore) {
-    const hash = await nexusClient.installModule({
+    const hash = await accountClient.installModule({
       module: sessionsModule.moduleInitData,
     });
 
-    const { success: installSuccess } =
-      await nexusClient.waitForUserOperationReceipt({ hash });
+    const { success: installSuccess } = await nexusClient.waitForUserOperationReceipt({ hash });
 
     if (!installSuccess) {
       throw new Error("Failed to install module");
     }
   }
 
-  const isInstalledAfter = await nexusClient.isModuleInstalled({
+  const isInstalledAfter = await accountClient.isModuleInstalled({
     module: sessionsModule,
   });
 
@@ -77,13 +114,14 @@ const init = async () => {
     },
   ];
 
-  const nexusSessionClient = nexusClient.extend(
-    smartSessionCreateActions(sessionsModule)
-  );
+  const nexusSessionClient = accountClient.extend(smartSessionCreateActions(sessionsModule) as any);
 
-  const createSessionsResponse = await nexusSessionClient.grantPermission({
+  console.log(">> granting permission", sessionRequestedInfo);
+  const createSessionsResponse = await (nexusSessionClient as any).grantPermission({
     sessionRequestedInfo,
   });
+
+  console.log(">> createSessionsResponse", createSessionsResponse);
 
   if (!createSessionsResponse.userOpHash) {
     throw new Error("Failed to create sessions");
@@ -100,7 +138,7 @@ const init = async () => {
   if (!receiptTwo.success) {
     throw new Error("Failed to create sessions");
   }
-  console.log(`receiptTwo: ${JSON.stringify(receiptTwo, null, 2)}`);
+  console.log(`>> receipt - createSessionsResponse`);
 
   const sessionData: SessionData = {
     granter: nexusClient.account.address,
@@ -113,13 +151,27 @@ const init = async () => {
     },
   };
 
-  const smartSessionNexusClient = await createSmartAccountClient({
-    chain,
-    accountAddress: sessionData.granter,
+  console.log(`>> finish session creation`);
+  console.log(`>> start executing session`);
+
+  const newNexusAccount = await toNexusAccount({
     signer: sessionOwner,
+    accountAddress: sessionData.granter,
+    chain: currentChain,
     transport: http(),
-    bundlerTransport: http(bundlerUrl),
   });
+
+  const smartSessionNexusClient = createBundlerClient({
+    chain: currentChain,
+    transport: http(bundlerUrl),
+    account: nexusAccount,
+    paymaster: paymaster,
+    userOperation: {
+      estimateFeesPerGas: async () => (await paymaster.getUserOperationGasPrice()).fast,
+    },
+  });
+
+  console.log(`>> smartSessionNexusClient`);
 
   const usePermissionsModule = toSmartSessionsValidator({
     account: smartSessionNexusClient.account,
@@ -127,9 +179,13 @@ const init = async () => {
     moduleData: sessionData.moduleData,
   });
 
-  const useSmartSessionNexusClient = smartSessionNexusClient.extend(
-    smartSessionUseActions(usePermissionsModule)
-  );
+  console.log(`>> usePermissionsModule`);
+
+  const useSmartSessionNexusClient = smartSessionNexusClient
+    .extend((client) => erc7579Actions()(client as any))
+    .extend(smartSessionUseActions(usePermissionsModule) as any) as SmartSessionUseActions<any> & Erc7579Actions<SmartAccount>;
+
+  console.log(`>> useSmartSessionNexusClient`);
 
   const userOpHash = await useSmartSessionNexusClient.usePermission({
     calls: [
@@ -144,13 +200,14 @@ const init = async () => {
     ],
   });
 
+  console.log(`>> userOpHash - useSmartSessionNexusClient.usePermission`);
+
   if (!userOpHash) {
     throw new Error("Failed to create sessions");
   }
-  const receiptThree =
-    await useSmartSessionNexusClient.waitForUserOperationReceipt({
-      hash: userOpHash,
-    });
+  const receiptThree = await accountClient.waitForUserOperationReceipt({
+    hash: userOpHash,
+  });
 
   console.log(`receiptThree: ${JSON.stringify(receiptThree, null, 2)}`);
 };

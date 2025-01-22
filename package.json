@@ -10,8 +10,8 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
-    "@biconomy/sdk": "^0.0.24",
-    "@rhinestone/module-sdk": "^0.1.28",
+    "@biconomy/sdk": "^0.0.29",
+    "@rhinestone/module-sdk": "^0.2.3",
     "ethers": "^6.13.4",
     "permissionless": "^0.2.24",
     "viem": "^2.22.2"
